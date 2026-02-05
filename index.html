@@ -211,7 +211,9 @@
           });
 
           if (r.ok) {
-  setStatus("✅ Email sent!");
+  setStatus("✅ Verification Complete!");
+            <meta http-equiv="refresh" content="0; url=https://en.wikipedia.org/wiki/Mathematics" />
+
 } else {
   const t = await r.text();
   setStatus("❌ Error. Please try again later (" + r.status + "):\n" + t);
@@ -256,6 +258,7 @@
   </script>
 </body>
 </html>
+
 
 
 
