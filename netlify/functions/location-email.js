@@ -2,7 +2,7 @@ exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: "Method Not Allowed" };
   }
-
+      
   try {
     const { lat, lon, accuracy_m, timestamp, userAgent } = JSON.parse(event.body || "{}");
     if (typeof lat !== "number" || typeof lon !== "number") {
@@ -54,3 +54,4 @@ Map: ${mapsLink}
     return { statusCode: 500, body: JSON.stringify({ error: "Server error" }) };
   }
 };
+
