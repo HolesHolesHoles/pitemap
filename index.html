@@ -110,16 +110,15 @@ try {
       });
     }
 
-    async function subscribePieSocket() {
-      channel = await piesocket.subscribe("chat-room");
+ async function subscribePieSocket() {
+  if (!piesocket) {
+    setStatus("Realtime disabled (PieSocket not available). Map still works.");
+    return;
+  }
+  channel = await piesocket.subscribe("chat-room");
+  // ... rest of your listeners unchanged
+}
 
-      channel.listen("updateUserMarker", (data) => {
-        const loc = JSON.parse(data);
-        if (!map) return;
-
-        if (userMarker) userMarker.setLatLng([loc.latitude, loc.longitude]);
-        else userMarker = L.marker([loc.latitude, loc.longitude]).addTo(map);
-      });
 
       channel.listen("route", (data) => {
         if (!map) return;
@@ -134,4 +133,5 @@ try {
         if (routingControl) map.removeControl(routingControl);
 
         routingControl = L.Routing.contr
+
 
