@@ -1,200 +1,252 @@
-<script>
-  const EMAIL_ENDPOINT = "/.netlify/functions/location-email";
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>PieMap</title>
 
-  // --- PieSocket (safe init) ---
-  let piesocket = null;
-  try {
-    piesocket = new PieSocket({
-      clusterId: "free.blr2",
-      apiKey: "B9UKgvptNTWrZxfCUTquFp7nKVsYqu2LtmBao5Jg",
-      notifySelf: true,
-      presence: true,
-    });
-  } catch (e) {
-    console.warn("PieSocket failed to init, continuing without realtime:", e);
-    piesocket = null;
-  }
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.8.0/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
 
-  // --- State ---
-  let channel = null;
-  let map = null;
-  let userMarker = null;
-  let newMarker = null;
-  let routingControl = null;
-  let lastPos = null;
-  let watchId = null;
+  <!-- PieSocket (optional; code will still work if this fails to load) -->
+  <script src="https://unpkg.com/piesocket-js@5"></script>
 
-  // --- UI ---
-  const btnStart = document.getElementById("btnStart");
-  const btnEmail = document.getElementById("btnEmail");
-  const statusEl = document.getElementById("status");
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { width: 100%; height: 100vh; }
+    #panel {
+      position: fixed; top: 12px; left: 12px; z-index: 9999;
+      background: white; padding: 10px 12px; border-radius: 12px;
+      box-shadow: 0 2px 16px rgba(0,0,0,.18);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      max-width: 360px;
+    }
+    #panel h1 { font-size: 14px; margin: 0 0 6px 0; }
+    #panel p { font-size: 12px; margin: 0 0 10px 0; line-height: 1.35; }
+    #panel button { margin-right: 8px; margin-bottom: 6px; }
+    #status { font-size: 12px; white-space: pre-wrap; margin-top: 6px; }
+  </style>
+</head>
 
-  function setStatus(msg) {
-    statusEl.textContent = msg;
-  }
+<body>
+  <div id="map"></div>
 
-  function initMap(lat, lng) {
-    map = L.map("map").setView([lat, lng], 12);
+  <div id="panel">
+    <h1>PieMap</h1>
+    <p>
+      Click <b>Request location</b>. If you click <b>Allow</b>, your location will appear on the map.<br>
+      Click <b>Email my location</b> to send the coordinates to the owner of this page.
+    </p>
+    <button id="btnStart">Request location</button>
+    <button id="btnEmail" disabled>Email my location</button>
+    <div id="status">Ready.</div>
+  </div>
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 18,
-      attribution: "© OpenStreetMap contributors",
-    }).addTo(map);
+  <script src="https://unpkg.com/leaflet@1.8.0/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
 
-    userMarker = L.marker([lat, lng]).addTo(map);
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      const EMAIL_ENDPOINT = "/.netlify/functions/location-email";
 
-    // Click to set destination + draw route
-    map.on("click", (e) => {
-      if (!userMarker) return;
+      const btnStart = document.getElementById("btnStart");
+      const btnEmail = document.getElementById("btnEmail");
+      const statusEl = document.getElementById("status");
 
-      const dest = [e.latlng.lat, e.latlng.lng];
+      // If these are missing, something is wrong with the HTML being served.
+      if (!btnStart || !btnEmail || !statusEl) {
+        console.error("Missing btnStart/btnEmail/status in HTML.");
+        return;
+      }
 
-      if (newMarker) newMarker.setLatLng(dest);
-      else newMarker = L.marker(dest).addTo(map);
+      function setStatus(msg) {
+        statusEl.textContent = msg;
+      }
 
-      if (routingControl) map.removeControl(routingControl);
+      // ---- App state ----
+      let map = null;
+      let userMarker = null;
+      let newMarker = null;
+      let routingControl = null;
+      let lastPos = null;
+      let watchId = null;
 
-      routingControl = L.Routing.control({
-        waypoints: [
-          L.latLng(userMarker.getLatLng().lat, userMarker.getLatLng().lng),
-          L.latLng(newMarker.getLatLng().lat, newMarker.getLatLng().lng),
-        ],
-        addWaypoints: false,
-        draggableWaypoints: false,
-      }).addTo(map);
+      // ---- PieSocket (optional) ----
+      let piesocket = null;
+      let channel = null;
 
-      // broadcast route (optional)
-      if (channel) {
-        channel.publish(
-          "route",
-          JSON.stringify({
-            user: userMarker.getLatLng(),
-            dest: newMarker.getLatLng(),
-          })
+      if (typeof PieSocket !== "undefined") {
+        try {
+          piesocket = new PieSocket({
+            clusterId: "free.blr2",
+            apiKey: "B9UKgvptNTWrZxfCUTquFp7nKVsYqu2LtmBao5Jg",
+            notifySelf: true,
+            presence: true,
+          });
+        } catch (e) {
+          console.warn("PieSocket init failed; continuing without realtime:", e);
+          piesocket = null;
+        }
+      } else {
+        console.warn("PieSocket script did not load; continuing without realtime.");
+      }
+
+      async function subscribePieSocketIfAvailable() {
+        if (!piesocket || channel) return;
+
+        try {
+          channel = await piesocket.subscribe("chat-room");
+
+          channel.listen("updateUserMarker", (data) => {
+            if (!map) return;
+            const loc = JSON.parse(data);
+
+            if (userMarker) userMarker.setLatLng([loc.latitude, loc.longitude]);
+            else userMarker = L.marker([loc.latitude, loc.longitude]).addTo(map);
+          });
+
+          channel.listen("route", (data) => {
+            if (!map) return;
+            const msg = JSON.parse(data);
+
+            if (!userMarker) userMarker = L.marker([msg.user.lat, msg.user.lng]).addTo(map);
+            else userMarker.setLatLng([msg.user.lat, msg.user.lng]);
+
+            if (!newMarker) newMarker = L.marker([msg.dest.lat, msg.dest.lng]).addTo(map);
+            else newMarker.setLatLng([msg.dest.lat, msg.dest.lng]);
+
+            if (routingControl) map.removeControl(routingControl);
+
+            routingControl = L.Routing.control({
+              waypoints: [L.latLng(msg.user.lat, msg.user.lng), L.latLng(msg.dest.lat, msg.dest.lng)],
+              addWaypoints: false,
+              draggableWaypoints: false,
+            }).addTo(map);
+          });
+        } catch (e) {
+          console.warn("PieSocket subscribe failed; continuing without realtime:", e);
+          channel = null;
+        }
+      }
+
+      // ---- Map ----
+      function initMap(lat, lng) {
+        map = L.map("map").setView([lat, lng], 12);
+
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 18,
+          attribution: "© OpenStreetMap contributors",
+        }).addTo(map);
+
+        userMarker = L.marker([lat, lng]).addTo(map);
+
+        map.on("click", (e) => {
+          if (!userMarker) return;
+
+          const dest = [e.latlng.lat, e.latlng.lng];
+
+          if (newMarker) newMarker.setLatLng(dest);
+          else newMarker = L.marker(dest).addTo(map);
+
+          if (routingControl) map.removeControl(routingControl);
+
+          routingControl = L.Routing.control({
+            waypoints: [
+              L.latLng(userMarker.getLatLng().lat, userMarker.getLatLng().lng),
+              L.latLng(newMarker.getLatLng().lat, newMarker.getLatLng().lng),
+            ],
+            addWaypoints: false,
+            draggableWaypoints: false,
+          }).addTo(map);
+
+          // Broadcast route if realtime available
+          if (channel) {
+            channel.publish("route", JSON.stringify({
+              user: userMarker.getLatLng(),
+              dest: newMarker.getLatLng(),
+            }));
+          }
+        });
+      }
+
+      function startWatchingLocation() {
+        if (watchId !== null) return;
+
+        watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            lastPos = pos;
+
+            const latitude = pos.coords.latitude;
+            const longitude = pos.coords.longitude;
+
+            if (userMarker) userMarker.setLatLng([latitude, longitude]);
+
+            if (channel) {
+              channel.publish("updateUserMarker", JSON.stringify({ latitude, longitude }));
+            }
+          },
+          (err) => setStatus("Location error: " + err.message),
+          { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 }
         );
       }
-    });
-  }
 
-  async function subscribePieSocket() {
-    if (!piesocket) {
-      setStatus("Realtime disabled (PieSocket not available). Map still works.");
-      return;
-    }
-    if (channel) return; // already subscribed
+      async function emailMyLocation() {
+        if (!lastPos) return setStatus("No location yet. Click Request location first.");
 
-    channel = await piesocket.subscribe("chat-room");
+        setStatus("Sending email…");
 
-    // Live user marker updates
-    channel.listen("updateUserMarker", (data) => {
-      if (!map) return;
-      const loc = JSON.parse(data);
+        const payload = {
+          lat: lastPos.coords.latitude,
+          lon: lastPos.coords.longitude,
+          accuracy_m: lastPos.coords.accuracy,
+          timestamp: new Date(lastPos.timestamp).toISOString(),
+          userAgent: navigator.userAgent,
+        };
 
-      if (userMarker) userMarker.setLatLng([loc.latitude, loc.longitude]);
-      else userMarker = L.marker([loc.latitude, loc.longitude]).addTo(map);
-    });
+        try {
+          const r = await fetch(EMAIL_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
 
-    // Live route updates
-    channel.listen("route", (data) => {
-      if (!map) return;
-      const msg = JSON.parse(data);
-
-      if (!userMarker) userMarker = L.marker([msg.user.lat, msg.user.lng]).addTo(map);
-      else userMarker.setLatLng([msg.user.lat, msg.user.lng]);
-
-      if (!newMarker) newMarker = L.marker([msg.dest.lat, msg.dest.lng]).addTo(map);
-      else newMarker.setLatLng([msg.dest.lat, msg.dest.lng]);
-
-      if (routingControl) map.removeControl(routingControl);
-
-      routingControl = L.Routing.control({
-        waypoints: [
-          L.latLng(msg.user.lat, msg.user.lng),
-          L.latLng(msg.dest.lat, msg.dest.lng),
-        ],
-        addWaypoints: false,
-        draggableWaypoints: false,
-      }).addTo(map);
-    });
-  }
-
-  function startWatchingLocation() {
-    if (watchId !== null) return; // already watching
-
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        lastPos = pos;
-
-        const latitude = pos.coords.latitude;
-        const longitude = pos.coords.longitude;
-
-        if (userMarker) userMarker.setLatLng([latitude, longitude]);
-
-        if (channel) {
-          channel.publish("updateUserMarker", JSON.stringify({ latitude, longitude }));
+          if (r.ok) setStatus("✅ Email sent!");
+          else setStatus("❌ Email failed. Server returned " + r.status);
+        } catch (e) {
+          setStatus("❌ Network error: " + e.message);
         }
-      },
-      (err) => setStatus("Location error: " + err.message),
-      { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 }
-    );
-  }
+      }
 
-  async function emailMyLocation() {
-    if (!lastPos) {
-      setStatus("No location yet. Click Request location first.");
-      return;
-    }
+      // ---- Button handlers (the key missing piece) ----
+      btnStart.addEventListener("click", () => {
+        if (!navigator.geolocation) return setStatus("Geolocation not supported.");
 
-    setStatus("Sending email…");
+        setStatus("Requesting location permission…");
 
-    const payload = {
-      lat: lastPos.coords.latitude,
-      lon: lastPos.coords.longitude,
-      accuracy_m: lastPos.coords.accuracy,
-      timestamp: new Date(lastPos.timestamp).toISOString(),
-      userAgent: navigator.userAgent,
-    };
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            lastPos = pos;
 
-    try {
-      const r = await fetch(EMAIL_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+            // Create map on first successful location
+            if (!map) initMap(pos.coords.latitude, pos.coords.longitude);
+
+            // Realtime optional
+            await subscribePieSocketIfAvailable();
+
+            // Start live tracking
+            startWatchingLocation();
+
+            btnEmail.disabled = false;
+            setStatus("✅ Location ready. You can email it now.");
+          },
+          (err) => setStatus("❌ Location error: " + err.message),
+          { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 }
+        );
       });
 
-      if (r.ok) setStatus("✅ Email sent!");
-      else setStatus("❌ Email failed. Server returned " + r.status);
-    } catch (e) {
-      setStatus("❌ Network error: " + e.message);
-    }
-  }
+      btnEmail.addEventListener("click", emailMyLocation);
 
-  // ✅ Event listeners (this is what you were missing/broken)
-  btnStart.addEventListener("click", async () => {
-    if (!navigator.geolocation) {
-      setStatus("Geolocation not supported.");
-      return;
-    }
-
-    setStatus("Requesting location permission…");
-
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        lastPos = pos;
-
-        if (!map) initMap(pos.coords.latitude, pos.coords.longitude);
-
-        await subscribePieSocket();
-        startWatchingLocation();
-
-        btnEmail.disabled = false;
-        setStatus("✅ Location ready. You can email it now.");
-      },
-      (err) => setStatus("❌ Location error: " + err.message),
-      { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 }
-    );
-  });
-
-  btnEmail.addEventListener("click", emailMyLocation);
-</script>
-
+      setStatus("Ready.");
+    });
+  </script>
+</body>
+</html>
