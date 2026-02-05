@@ -45,12 +45,20 @@
   <script>
     const EMAIL_ENDPOINT = "/.netlify/functions/location-email";
 
-    const piesocket = new PieSocket.default({
-      clusterId: "free.blr2",
-      apiKey: "B9UKgvptNTWrZxfCUTquFp7nKVsYqu2LtmBao5Jg",
-      notifySelf: true,
-      presence: true,
-    });
+   let piesocket = null;
+
+try {
+  piesocket = new PieSocket({
+    clusterId: "free.blr2",
+    apiKey: "B9UKgvptNTWrZxfCUTquFp7nKVsYqu2LtmBao5Jg",
+    notifySelf: true,
+    presence: true,
+  });
+} catch (e) {
+  console.warn("PieSocket failed to init, continuing without realtime:", e);
+  piesocket = null;
+}
+
 
     let channel = null;
     let map = null;
@@ -126,3 +134,4 @@
         if (routingControl) map.removeControl(routingControl);
 
         routingControl = L.Routing.contr
+
