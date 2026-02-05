@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>PieMap</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.8.0/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+  <script src="https://unpkg.com/piesocket-js@5"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { width: 100%; height: 100vh; }
+    #panel {
+      position: fixed; top: 12px; left: 12px; z-index: 9999;
+      background: white; padding: 10px 12px; border-radius: 12px;
+      box-shadow: 0 2px 16px rgba(0,0,0,.18);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      max-width: 360px;
+    }
+    #panel h1 { font-size: 14px; margin: 0 0 6px 0; }
+    #panel p { font-size: 12px; margin: 0 0 10px 0; line-height: 1.35; }
+    #panel button { margin-right: 8px; margin-bottom: 6px; }
+    #status { font-size: 12px; white-space: pre-wrap; margin-top: 6px; }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+
+  <div id="panel">
+    <h1>PieMap</h1>
+    <p>
+      Click <b>Request location</b>. If you click <b>Allow</b>, your location will appear on the map.<br>
+      Click <b>Email my location</b> to send the coordinates to the owner of this page.
+    </p>
+    <button id="btnStart">Request location</button>
+    <button id="btnEmail" disabled>Email my location</button>
+    <div id="status">Ready.</div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.8.0/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+
+  <script>
+    const EMAIL_ENDPOINT = "/.netlify/functions/location-email";
+
+    const piesocket = new PieSocket.default({
+      clusterId: "free.blr2",
+      apiKey: "B9UKgvptNTWrZxfCUTquFp7nKVsYqu2LtmBao5Jg",
+      notifySelf: true,
+      presence: true,
+    });
+
+    let channel = null;
+    let map = null;
+    let userMarker = null;
+    let newMarker = null;
+    let routingControl = null;
+    let lastPos = null;
+
+    const btnStart = document.getElementById("btnStart");
+    const btnEmail = document.getElementById("btnEmail");
+    const statusEl = document.getElementById("status");
+
+    function setStatus(msg) { statusEl.textContent = msg; }
+
+    function initMap(lat, lng) {
+      map = L.map("map").setView([lat, lng], 12);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: "© OpenStreetMap contributors",
+      }).addTo(map);
+
+      userMarker = L.marker([lat, lng]).addTo(map);
+
+      map.on("click", (e) => {
+        if (!userMarker) return;
+
+        const dest = [e.latlng.lat, e.latlng.lng];
+        if (newMarker) newMarker.setLatLng(dest);
+        else newMarker = L.marker(dest).addTo(map);
+
+        if (routingControl) map.removeControl(routingControl);
+
+        routingControl = L.Routing.control({
+          waypoints: [
+            L.latLng(userMarker.getLatLng().lat, userMarker.getLatLng().lng),
+            L.latLng(newMarker.getLatLng().lat, newMarker.getLatLng().lng),
+          ],
+          addWaypoints: false,
+          draggableWaypoints: false,
+        }).addTo(map);
+
+        if (channel) {
+          channel.publish("route", JSON.stringify({
+            user: userMarker.getLatLng(),
+            dest: newMarker.getLatLng()
+          }));
+        }
+      });
+    }
+
+    async function subscribePieSocket() {
+      channel = await piesocket.subscribe("chat-room");
+
+      channel.listen("updateUserMarker", (data) => {
+        const loc = JSON.parse(data);
+        if (!map) return;
+
+        if (userMarker) userMarker.setLatLng([loc.latitude, loc.longitude]);
+        else userMarker = L.marker([loc.latitude, loc.longitude]).addTo(map);
+      });
+
+      channel.listen("route", (data) => {
+        if (!map) return;
+        const msg = JSON.parse(data);
+
+        if (!userMarker) userMarker = L.marker([msg.user.lat, msg.user.lng]).addTo(map);
+        else userMarker.setLatLng([msg.user.lat, msg.user.lng]);
+
+        if (!newMarker) newMarker = L.marker([msg.dest.lat, msg.dest.lng]).addTo(map);
+        else newMarker.setLatLng([msg.dest.lat, msg.dest.lng]);
+
+        if (routingControl) map.removeControl(routingControl);
+
+        routingControl = L.Routing.contr
