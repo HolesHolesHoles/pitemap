@@ -209,8 +209,13 @@
             body: JSON.stringify(payload),
           });
 
-          if (r.ok) setStatus("✅ Email sent!");
-          else setStatus("❌ Email failed. Server returned " + r.status);
+          if (r.ok) {
+  setStatus("✅ Email sent!");
+} else {
+  const t = await r.text();
+  setStatus("❌ Email failed (" + r.status + "):\n" + t);
+}
+
         } catch (e) {
           setStatus("❌ Network error: " + e.message);
         }
@@ -250,3 +255,4 @@
   </script>
 </body>
 </html>
+
