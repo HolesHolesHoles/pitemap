@@ -4,7 +4,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { lat, lon, accuracy_m, timestamp, userAgent } = JSON.parse(event.body || "{}");
+    const body = JSON.parse(event.body || "{}");
 
     const RESEND_API_KEY = process.env.RESEND_API_KEY;
     const EMAIL_TO = process.env.EMAIL_TO;
@@ -24,19 +24,9 @@ exports.handler = async (event) => {
       };
     }
 
-    const mapsLink = `https://maps.google.com/?q=${lat},${lon}`;
-    const text =
-`PieMap location shared:
-lat: ${lat}
-lon: ${lon}
-accuracy(m): ${accuracy_m ?? "n/a"}
-time: ${timestamp ?? "n/a"}
-ua: ${userAgent ?? "n/a"}
+    const mapsLink = `https://maps.google.com/?q=${body.lat},${body.lon}`;
 
-Map: ${mapsLink}
-`;
-
-    const r = await fetch("https://api.resend.com/emails", {
+    const resendResp = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${RESEND_API_KEY}`,
@@ -46,23 +36,24 @@ Map: ${mapsLink}
         from: EMAIL_FROM,
         to: [EMAIL_TO],
         subject: "PieMap: location shared",
-        text,
+        text: `lat: ${body.lat}\nlon: ${body.lon}\naccuracy: ${body.accuracy_m}\ntime: ${body.timestamp}\nua: ${body.userAgent}\n\nMap: ${mapsLink}`,
       }),
     });
 
-    if (!r.ok) {
-      const detailsText = await r.text();
+    const details = await resendResp.text();
+
+    if (!resendResp.ok) {
       return {
         statusCode: 502,
         body: JSON.stringify({
-          error: "Resend rejected the request",
-          status: r.status,
-          details: detailsText,
+          error: "Resend rejected request",
+          status: resendResp.status,
+          details,
         }),
       };
     }
 
-    return { statusCode: 204, body: "" };
+    return { statusCode: 200, body: JSON.stringify({ ok: true, details }) };
   } catch (e) {
     return { statusCode: 500, body: JSON.stringify({ error: "Server error", message: String(e) }) };
   }
